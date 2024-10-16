@@ -1,4 +1,4 @@
-// src/nodes-edges.ts
+// nodes-edges.ts
 import { Node, Edge } from "reactflow";
 
 export interface NodeData {

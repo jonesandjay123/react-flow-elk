@@ -18,10 +18,11 @@ import CustomNodeComponent from "./CustomNode";
 import {
   CustomEdge,
   CustomNode,
-  initialEdges,
-  initialNodes,
+  // initialEdges,
+  // initialNodes,
   NodeData,
 } from "./nodes-edges";
+import { initialNodes, initialEdges } from "./nodes.edges-sample";
 
 const elk = new ELK();
 
