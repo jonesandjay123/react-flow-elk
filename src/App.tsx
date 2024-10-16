@@ -94,6 +94,8 @@ const getLayoutedElements = async (
         return {
           ...originalNode,
           position: { x: node.x, y: node.y },
+          targetPosition: Position.Left,
+          sourcePosition: Position.Right,
         };
       }
     );
@@ -154,7 +156,7 @@ function LayoutFlow() {
 
   // 計算初始佈局
   useLayoutEffect(() => {
-    onLayout({ direction: "DOWN", useInitialNodes: true });
+    onLayout({ direction: "RIGHT", useInitialNodes: true });
   }, [onLayout]);
 
   return (
