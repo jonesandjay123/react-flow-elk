@@ -22,7 +22,7 @@ import {
   // initialNodes,
   NodeData,
 } from "./nodes-edges";
-import { initialNodes, initialEdges } from "./nodes.edges-sample";
+import { initialNodes, initialEdges } from "./nodes.edges-sample1";
 
 const elk = new ELK();
 
