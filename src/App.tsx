@@ -1,6 +1,6 @@
 // src/App.tsx
-import React, { useCallback, useLayoutEffect } from "react";
-import ELK, { ElkExtendedEdge, ElkNode } from "elkjs";
+import React, { useCallback, useLayoutEffect, useMemo } from "react";
+import ELK, { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk.bundled.js";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -15,28 +15,20 @@ import {
 
 import "reactflow/dist/style.css";
 import CustomNodeComponent from "./CustomNode";
-import {
-  CustomEdge,
-  CustomNode,
-  // initialEdges,
-  // initialNodes,
-  NodeData,
-} from "./nodes-edges";
+import { CustomEdge, CustomNode, NodeData } from "./nodes-edges";
 import { initialNodes, initialEdges } from "./nodes.edges-sample1";
 
 const elk = new ELK();
 
-// 定義 ELK 的選項類型
 type ElkLayoutOptions = Record<string, string>;
 
-// ELK 配置選項
 const elkOptions: ElkLayoutOptions = {
   "elk.algorithm": "layered",
   "elk.layered.spacing.nodeNodeBetweenLayers": "100",
   "elk.spacing.nodeNode": "80",
+  "elk.hierarchyHandling": "INCLUDE_CHILDREN",
 };
 
-// 定義佈局函數的選項類型
 interface LayoutOptions {
   direction: "RIGHT" | "LEFT" | "DOWN" | "UP";
   useInitialNodes?: boolean;
@@ -49,82 +41,184 @@ const getLayoutedElements = async (
 ): Promise<{ nodes: CustomNode[]; edges: CustomEdge[] }> => {
   const isHorizontal = options["elk.direction"] === "RIGHT";
 
-  // 將 CustomNode 轉換為 ElkNode
-  const elkNodes: ElkNode[] = nodes.map((node) => ({
-    id: node.id,
-    layoutOptions: options,
-    targetPosition: isHorizontal ? Position.Left : Position.Top,
-    sourcePosition: isHorizontal ? Position.Right : Position.Bottom,
-    width: 150,
-    height: 50,
-    labels: [{ text: node.data.label }],
-  }));
+  // 設置字體，用於計算節點寬度
+  const font = "normal 12px Arial, sans-serif";
 
-  // 將 CustomEdge 轉換為 ElkExtendedEdge
-  const elkEdges: ElkExtendedEdge[] = edges.map((edge) => ({
-    id: edge.id,
-    sources: [edge.source],
-    targets: [edge.target],
-  }));
+  // 建立節點映射，方便後續處理
+  const nodeMap = new Map<string, ElkNode>();
 
-  // 定義 graph 對象
-  const graph: ElkNode & { children: ElkNode[]; edges: ElkExtendedEdge[] } = {
+  // 初始化 ELK 節點
+  nodes.forEach((node) => {
+    const label = node.data.label;
+    const labelWidth = getTextWidth(label, font);
+    const width = Math.max(
+      labelWidth + 20,
+      typeof node.style?.width === "number" ? node.style.width : 150
+    );
+    const height =
+      typeof node.style?.height === "number" ? node.style.height : 50;
+
+    const elkNode: ElkNode = {
+      id: node.id,
+      labels: [{ text: label }],
+      width: width,
+      height: height,
+      layoutOptions: {},
+      children: [],
+      edges: [],
+    };
+    nodeMap.set(node.id, elkNode);
+  });
+
+  // 構建 ELK 節點的層次結構
+  const elkRootNodes: ElkNode[] = [];
+
+  nodes.forEach((node) => {
+    const elkNode = nodeMap.get(node.id)!;
+    if (node.parentNode) {
+      const parentElkNode = nodeMap.get(node.parentNode);
+      if (parentElkNode) {
+        parentElkNode.children!.push(elkNode);
+      } else {
+        // 如果父節點不存在，將節點添加到根節點列表
+        elkRootNodes.push(elkNode);
+      }
+    } else {
+      elkRootNodes.push(elkNode);
+    }
+  });
+
+  // 定義 ELK 的圖形結構
+  const graph: ElkNode = {
     id: "root",
-    layoutOptions: options,
-    children: elkNodes,
-    edges: elkEdges,
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": options["elk.direction"],
+      "elk.layered.spacing.nodeNodeBetweenLayers": "100",
+      "elk.spacing.nodeNode": "80",
+      "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+    },
+    children: elkRootNodes,
+    edges: [],
   };
+
+  // 將根節點添加到 nodeMap
+  nodeMap.set("root", graph);
+
+  // 將邊添加到對應的節點中
+  edges.forEach((edge) => {
+    const sourceNode = nodes.find((n) => n.id === edge.source);
+    const targetNode = nodes.find((n) => n.id === edge.target);
+
+    if (!sourceNode || !targetNode) {
+      throw new Error(`Edge connects unknown nodes: ${edge.id}`);
+    }
+
+    // 找到兩個節點的最近共同祖先
+    const commonAncestorId = findCommonAncestor(sourceNode, targetNode, nodes);
+    const ancestorElkNode = nodeMap.get(commonAncestorId)!;
+
+    ancestorElkNode.edges!.push({
+      id: edge.id,
+      sources: [edge.source],
+      targets: [edge.target],
+    });
+  });
 
   try {
     const layoutedGraph = await elk.layout(graph);
 
-    if (!layoutedGraph.children || !layoutedGraph.edges) {
-      throw new Error("No children or edges in layoutedGraph");
-    }
+    // 計算絕對位置
+    const absolutePositions: { [key: string]: { x: number; y: number } } = {};
+    const relativePositions: { [key: string]: { x: number; y: number } } = {};
+
+    const computePositions = (
+      node: ElkNode,
+      parentId: string | null,
+      offsetX = 0,
+      offsetY = 0
+    ) => {
+      const x = (node.x || 0) + offsetX;
+      const y = (node.y || 0) + offsetY;
+      absolutePositions[node.id] = { x, y };
+      relativePositions[node.id] = { x: node.x || 0, y: node.y || 0 };
+
+      if (node.children) {
+        node.children.forEach((child) =>
+          computePositions(child, node.id, x, y)
+        );
+      }
+    };
+
+    computePositions(layoutedGraph, null);
 
     // 映射 ELK 布局結果到 CustomNode
-    const layoutedNodes: CustomNode[] = layoutedGraph.children.map(
-      (node: ElkNode) => {
-        const originalNode = nodes.find((n) => n.id === node.id);
-        if (!originalNode) {
-          throw new Error(`Node with id ${node.id} not found`);
-        }
-        if (node.x === undefined || node.y === undefined) {
-          throw new Error(`Node position for id ${node.id} is undefined`);
-        }
-        return {
-          ...originalNode,
-          position: { x: node.x, y: node.y },
-          targetPosition: Position.Left,
-          sourcePosition: Position.Right,
-        };
+    const layoutedNodes: CustomNode[] = nodes.map((node) => {
+      const position = node.parentNode
+        ? relativePositions[node.id]
+        : absolutePositions[node.id];
+      if (!position) {
+        throw new Error(`Position for node ${node.id} not found`);
       }
-    );
+      return {
+        ...node,
+        position,
+        positionAbsolute: node.parentNode ? { x: 0, y: 0 } : position,
+        parentNode: node.parentNode,
+        targetPosition: Position.Left,
+        sourcePosition: Position.Right,
+      };
+    });
 
-    // 映射 ELK 布局結果到 CustomEdge
-    const layoutedEdges: CustomEdge[] = layoutedGraph.edges.map(
-      (edge: ElkExtendedEdge) => {
-        const originalEdge = edges.find((e) => e.id === edge.id);
-        if (!originalEdge) {
-          throw new Error(`Edge with id ${edge.id} not found`);
-        }
-        return {
-          ...originalEdge,
-          source: edge.sources[0],
-          target: edge.targets[0],
-        };
-      }
-    );
-
-    return { nodes: layoutedNodes, edges: layoutedEdges };
+    return { nodes: layoutedNodes, edges };
   } catch (error) {
     console.error("ELK layout error:", error);
     return { nodes, edges };
   }
 };
 
+// 計算文字寬度的函數
+function getTextWidth(text: string, font: string): number {
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.font = font;
+    const metrics = context.measureText(text);
+    return metrics.width;
+  }
+  return text.length * 10; // 預設每個字元寬度為 10
+}
+
+// 查找最近共同祖先的函數
+function findCommonAncestor(
+  node1: CustomNode,
+  node2: CustomNode,
+  nodes: CustomNode[]
+): string {
+  const ancestors1 = getAncestors(node1, nodes);
+  const ancestors2 = getAncestors(node2, nodes);
+
+  for (const ancestor of ancestors1) {
+    if (ancestors2.includes(ancestor)) {
+      return ancestor;
+    }
+  }
+  return "root";
+}
+
+function getAncestors(node: CustomNode, nodes: CustomNode[]): string[] {
+  const ancestors = [];
+  let currentNode = node;
+  while (currentNode.parentNode) {
+    ancestors.push(currentNode.parentNode);
+    currentNode = nodes.find((n) => n.id === currentNode.parentNode)!;
+  }
+  return ancestors;
+}
+
 function LayoutFlow() {
-  // 修改這裡的泛型參數
+  const nodeTypes = useMemo(() => ({ custom: CustomNodeComponent }), []);
+
   const [nodes, setNodes, onNodesChange] =
     useNodesState<NodeData>(initialNodes);
   const [edges, setEdges, onEdgesChange] =
@@ -168,7 +262,7 @@ function LayoutFlow() {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       fitView
-      nodeTypes={{ custom: CustomNodeComponent }}
+      nodeTypes={nodeTypes}
     >
       <Panel position="top-right">
         <button onClick={() => onLayout({ direction: "DOWN" })}>
